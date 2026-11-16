@@ -69,7 +69,7 @@ jobs:
           fi
           skopeo inspect --authfile "$REGISTRY_AUTH_FILE" --raw "docker://$RUNTIME_IMAGE" > published-manifest.json
           test "sha256:$(sha256sum published-manifest.json | cut -d' ' -f1)" = "$MANIFEST_DIGEST"
-          skopeo inspect --authfile "$REGISTRY_AUTH_FILE" --config "docker://$RUNTIME_IMAGE@$MANIFEST_DIGEST" > published-config.json
+          skopeo inspect --authfile "$REGISTRY_AUTH_FILE" --config "docker://${RUNTIME_IMAGE%:*}@$MANIFEST_DIGEST" > published-config.json
           jq --sort-keys . verified-config.json > expected-config.json
           jq --sort-keys . published-config.json > actual-config.json
           cmp expected-config.json actual-config.json
