@@ -68,8 +68,10 @@ jobs:
           jq -n --arg source "$GITHUB_SHA" --arg version "$version" --arg runnerImage "$ImageVersion" \
             --arg manifest "sha256:$(sha256sum manifest.json | cut -d' ' -f1)" \
             --arg config "$(jq -r .config.digest manifest.json)" \
+            --arg archive "sha256:$(sha256sum runtime.oci.tar | cut -d' ' -f1)" \
+            --argjson archiveBytes "$(stat -c '%s' runtime.oci.tar)" \
             --arg base "$(jq -r '.config.Labels["org.opencontainers.image.base.name"]' config.json)" \
-            '{source:$source,version:$version,platform:"linux/amd64",runnerImage:$runnerImage,manifestDigest:$manifest,configDigest:$config,base:$base}' > receipt.json
+            '{source:$source,version:$version,platform:"linux/amd64",runnerImage:$runnerImage,manifestDigest:$manifest,configDigest:$config,archiveSha256:$archive,archiveBytes:$archiveBytes,base:$base}' > receipt.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         id: publish
         with:

@@ -9,9 +9,9 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
-import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 const execute = promisify(execFile);
 const [image, output] = process.argv.slice(2);
