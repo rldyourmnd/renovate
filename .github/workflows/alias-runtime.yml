@@ -1,0 +1,152 @@
+name: Temporary alias runtime
+
+on:
+  push:
+    branches:
+      - fix/jsonata-yaml-alias-runtime
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+  VITEST_MAX_WORKERS: '2'
+
+jobs:
+  build:
+    if: github.repository == 'rldyourmnd/renovate' && github.ref == 'refs/heads/fix/jsonata-yaml-alias-runtime'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    outputs:
+      artifact-id: ${{ steps.publish.outputs.artifact-id }}
+      artifact-digest: ${{ steps.publish.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-node
+        with:
+          node-version: '24.22.2'
+          os: ${{ runner.os }}
+          use-cache: 'false'
+      - name: Check the runtime support and stable backport
+        run: |
+          git merge-base --is-ancestor af7250dea1c88e924cd022b6af1455b11930ebb8 HEAD
+          git diff --exit-code f8ce2a9009e42f06c388ca22ce7e99af78b1ec8c -- pnpm-lock.yaml pnpm-workspace.yaml patches
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          import { readFileSync } from 'node:fs';
+          const original = JSON.parse(execFileSync('git', ['show', 'f8ce2a9009e42f06c388ca22ce7e99af78b1ec8c:package.json'], { encoding: 'utf8' }));
+          const current = JSON.parse(readFileSync('package.json', 'utf8'));
+          delete original.version;
+          delete current.version;
+          assert.deepEqual(current, original, 'the runtime must reuse exactly the official production dependencies');
+          JS
+          pnpm check --all .github/workflows/alias-runtime.yml tools/docker/qualify-alias-runtime.mjs package.json
+          pnpm check --all lib/config/validation.spec.ts lib/modules/manager/custom/jsonata/index.spec.ts lib/util/yaml.spec.ts
+          git diff --exit-code
+      - name: Build the source and one amd64 runtime
+        run: |
+          pnpm build
+          version=$(node --input-type=module -e 'import fs from "node:fs"; process.stdout.write(JSON.parse(fs.readFileSync("package.json")).version)')
+          docker version
+          docker buildx version
+          skopeo --version
+          docker build --platform linux/amd64 --file tools/docker/alias-runtime.Dockerfile \
+            --build-arg RENOVATE_VERSION="$version" --build-arg SOURCE_REVISION="$GITHUB_SHA" \
+            --tag renovate-alias-runtime:proof .
+          mkdir -p "$RUNNER_TEMP/runtime-image"
+          skopeo copy --format oci docker-daemon:renovate-alias-runtime:proof \
+            "oci-archive:$RUNNER_TEMP/runtime-image/runtime.oci.tar:runtime"
+          skopeo inspect --raw "oci-archive:$RUNNER_TEMP/runtime-image/runtime.oci.tar:runtime" > "$RUNNER_TEMP/runtime-image/manifest.json"
+          skopeo inspect --config "oci-archive:$RUNNER_TEMP/runtime-image/runtime.oci.tar:runtime" > "$RUNNER_TEMP/runtime-image/config.json"
+          cd "$RUNNER_TEMP/runtime-image"
+          sha256sum runtime.oci.tar manifest.json config.json > SHA256SUMS
+          jq -n --arg source "$GITHUB_SHA" --arg version "$version" --arg runnerImage "$ImageVersion" \
+            --arg manifest "sha256:$(sha256sum manifest.json | cut -d' ' -f1)" \
+            --arg config "$(jq -r .config.digest manifest.json)" \
+            --arg base "$(jq -r '.config.Labels["org.opencontainers.image.base.name"]' config.json)" \
+            '{source:$source,version:$version,platform:"linux/amd64",runnerImage:$runnerImage,manifestDigest:$manifest,configDigest:$config,base:$base}' > receipt.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: publish
+        with:
+          name: temporary-alias-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/runtime-image/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Remove the owned build image
+        if: always()
+        run: |
+          if docker image inspect renovate-alias-runtime:proof >/dev/null 2>&1; then
+            docker image rm renovate-alias-runtime:proof
+          fi
+
+  qualify-published:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          path: ${{ runner.temp }}/runtime-image
+          merge-multiple: true
+      - name: Verify and import the downloaded OCI image
+        env:
+          ARTIFACT_ID: ${{ needs.build.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ needs.build.outputs.artifact-digest }}
+        run: |
+          cd "$RUNNER_TEMP/runtime-image"
+          sha256sum --check SHA256SUMS
+          skopeo inspect --raw "oci-archive:$PWD/runtime.oci.tar:runtime" > downloaded-manifest.json
+          cmp manifest.json downloaded-manifest.json
+          skopeo inspect --config "oci-archive:$PWD/runtime.oci.tar:runtime" > downloaded-config.json
+          cmp config.json downloaded-config.json
+          test "$(jq -r .source receipt.json)" = "$GITHUB_SHA"
+          test "$(jq -r .manifestDigest receipt.json)" = "sha256:$(sha256sum manifest.json | cut -d' ' -f1)"
+          test "$(jq -r .configDigest receipt.json)" = "$(jq -r .config.digest manifest.json)"
+          expected_base=$(sed -n 's/^ARG RUNTIME_BASE=//p' "$GITHUB_WORKSPACE/tools/docker/alias-runtime.Dockerfile")
+          test "$(jq -r '.config.Labels["org.opencontainers.image.base.name"]' config.json)" = "$expected_base"
+          expected_version=$(jq -r .version "$GITHUB_WORKSPACE/package.json")
+          test "$(jq -r .version receipt.json)" = "$expected_version"
+          test "$(jq -r '.config.Labels["org.opencontainers.image.version"]' config.json)" = "$expected_version"
+          test "$(jq -r '.config.Labels["org.opencontainers.image.source"]' config.json)" = https://github.com/rldyourmnd/renovate
+          test "$(jq -r '.config.Labels["org.opencontainers.image.licenses"]' config.json)" = AGPL-3.0-only
+          test "$(jq -r '.config.User' config.json)" = 12021
+          test "$(jq -r .os config.json)" = linux
+          test "$(jq -r .architecture config.json)" = amd64
+          test "$(jq -r '.config.Labels["org.opencontainers.image.revision"]' config.json)" = "$GITHUB_SHA"
+          skopeo copy "oci-archive:$PWD/runtime.oci.tar:runtime" docker-daemon:renovate-alias-runtime:downloaded
+          test "$(docker image inspect --format '{{.Id}}' renovate-alias-runtime:downloaded)" = "$(jq -r .configDigest receipt.json)"
+          jq --arg id "$ARTIFACT_ID" --arg digest "$ARTIFACT_DIGEST" \
+            '. + {artifactId:$id,artifactDigest:$digest,downloadVerified:true}' receipt.json > downloaded-receipt.json
+      - name: Run the downloaded native engine
+        run: |
+          node tools/docker/qualify-alias-runtime.mjs \
+            "$(jq -r .configDigest "$RUNNER_TEMP/runtime-image/receipt.json")" \
+            "$RUNNER_TEMP/runtime-qualification"
+      - name: Remove the downloaded image and owned archive
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/runtime-qualification"
+          if test -f "$RUNNER_TEMP/runtime-image/downloaded-receipt.json"; then
+            cp "$RUNNER_TEMP/runtime-image/downloaded-receipt.json" "$RUNNER_TEMP/runtime-qualification/"
+          fi
+          if docker image inspect renovate-alias-runtime:downloaded >/dev/null 2>&1; then
+            docker image rm renovate-alias-runtime:downloaded
+          fi
+          rm -rf "$RUNNER_TEMP/runtime-image"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: alias-runtime-qualification-${{ github.sha }}
+          path: ${{ runner.temp }}/runtime-qualification/
+          if-no-files-found: error
+          retention-days: 7
