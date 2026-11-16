@@ -1501,56 +1501,6 @@ Set it to `0` to reject files containing any YAML alias, including aliases outsi
 This is useful when updating a shared anchor could also change a value outside the manager's intended scope.
 The whole file is skipped with a warning when it cannot be parsed with aliases disabled; literal values without aliases remain supported.
 
-
-### `dependencyDashboard.autoclose`
-
-You can configure this to `true` if you prefer Renovate to close an existing Dependency Dashboard whenever there are no outstanding PRs left.
-
-### `dependencyDashboard.customize`
-
-You may use the `customize` object to customize sections in the Dependency Dashboard.
-
-Supported fields:
-
-- `repoProblemsHeader`: This field will replace the header of the Repository Problems in the Dependency Dashboard issue.
-
-### `dependencyDashboard.footer`
-
-### `dependencyDashboard.header`
-
-### `dependencyDashboard.osvVulnerabilitySummary`
-
-Use this option to control if the Dependency Dashboard lists the OSV-sourced CVEs for your repository.
-You can choose from:
-
-- `none` (default) do not list any CVEs
-- `unresolved` list CVEs that have no fixes
-- `all` list all CVEs
-
-You will only get OSV-based vulnerability alerts for direct dependencies.
-
-This feature is independent of the `osvVulnerabilityAlerts` option.
-
-The source of these CVEs is [OSV.dev](https://osv.dev/).
-
-### `dependencyDashboard.pinned`
-
-If there are already the maximum number of Issues pinned, Renovate will leave the Dependency Dashboard unpinned.
-
-### `dependencyDashboard.reportAbandonment`
-
-Controls whether abandoned packages are reported in the Dependency Dashboard.
-
-When enabled (default), Renovate will display a collapsible section in the Dependency Dashboard listing packages that have been identified as abandoned based on the `abandonmentThreshold` configuration.
-This helps you identify dependencies that may need attention due to lack of maintenance.
-
-Set this to `false` if you prefer not to see abandoned packages in your Dependency Dashboard.
-
-### `dependencyDashboard.title`
-
-Configure this option if you prefer a different title for the Dependency Dashboard.
-
-
 ## `defaultRegistryUrls`
 
 Override a datasource's default registries with this config option.
@@ -1613,6 +1563,54 @@ It is pointless to edit the labels, as Renovate restores the labels on each run.
   Before the `dependencyDashboard` object was introduced, these settings were separate options, such as `dependencyDashboardTitle`, `dependencyDashboardLabels` and `customizeDashboard`.
   Renovate migrates them into the `dependencyDashboard` object.
   `dependencyDashboardApproval` and `dependencyDashboardCategory` remain separate options, as they apply to updates rather than to the Dependency Dashboard issue.
+
+### `dependencyDashboard.autoclose`
+
+You can configure this to `true` if you prefer Renovate to close an existing Dependency Dashboard whenever there are no outstanding PRs left.
+
+### `dependencyDashboard.customize`
+
+You may use the `customize` object to customize sections in the Dependency Dashboard.
+
+Supported fields:
+
+- `repoProblemsHeader`: This field will replace the header of the Repository Problems in the Dependency Dashboard issue.
+
+### `dependencyDashboard.footer`
+
+### `dependencyDashboard.header`
+
+### `dependencyDashboard.osvVulnerabilitySummary`
+
+Use this option to control if the Dependency Dashboard lists the OSV-sourced CVEs for your repository.
+You can choose from:
+
+- `none` (default) do not list any CVEs
+- `unresolved` list CVEs that have no fixes
+- `all` list all CVEs
+
+You will only get OSV-based vulnerability alerts for direct dependencies.
+
+This feature is independent of the `osvVulnerabilityAlerts` option.
+
+The source of these CVEs is [OSV.dev](https://osv.dev/).
+
+### `dependencyDashboard.pinned`
+
+If there are already the maximum number of Issues pinned, Renovate will leave the Dependency Dashboard unpinned.
+
+### `dependencyDashboard.reportAbandonment`
+
+Controls whether abandoned packages are reported in the Dependency Dashboard.
+
+When enabled (default), Renovate will display a collapsible section in the Dependency Dashboard listing packages that have been identified as abandoned based on the `abandonmentThreshold` configuration.
+This helps you identify dependencies that may need attention due to lack of maintenance.
+
+Set this to `false` if you prefer not to see abandoned packages in your Dependency Dashboard.
+
+### `dependencyDashboard.title`
+
+Configure this option if you prefer a different title for the Dependency Dashboard.
 
 ## `dependencyDashboardApproval`
 
