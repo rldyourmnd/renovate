@@ -45,8 +45,9 @@ jobs:
           delete current.version;
           assert.deepEqual(current, original, 'the runtime must reuse exactly the official production dependencies');
           JS
-          pnpm check --all .github/workflows/alias-runtime.yml tools/docker/qualify-alias-runtime.mjs package.json
+          pnpm check --all .github/workflows/alias-runtime.yml tools/docker/qualify-alias-runtime.mjs package.json docs/usage/configuration-options.md
           pnpm check --all lib/config/validation.spec.ts lib/modules/manager/custom/jsonata/index.spec.ts lib/util/yaml.spec.ts
+          pnpm lint-documentation
           git diff --exit-code
       - name: Build the source and one amd64 runtime
         run: |
@@ -130,6 +131,8 @@ jobs:
           jq --arg id "$ARTIFACT_ID" --arg digest "$ARTIFACT_DIGEST" \
             '. + {artifactId:$id,artifactDigest:$digest,downloadVerified:true}' receipt.json > downloaded-receipt.json
       - name: Run the downloaded native engine
+        env:
+          PRESET_READ_TOKEN: ${{ github.token }}
         run: |
           node tools/docker/qualify-alias-runtime.mjs \
             "$(jq -r .configDigest "$RUNNER_TEMP/runtime-image/receipt.json")" \

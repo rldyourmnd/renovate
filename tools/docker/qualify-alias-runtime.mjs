@@ -16,6 +16,10 @@ import { promisify } from 'node:util';
 const execute = promisify(execFile);
 const [image, output] = process.argv.slice(2);
 assert.ok(image && output, 'usage: qualify-alias-runtime.mjs IMAGE OUTPUT');
+assert.ok(
+  process.env.PRESET_READ_TOKEN,
+  'the job public-preset read token is required',
+);
 const { version } = JSON.parse(await readFile('package.json', 'utf8'));
 const repository = 'NDDev-Technocracy-OpenNetwork/nddev-ci';
 const revision = '3e5aabcba0485ac98679a050e0a99793ddf7c72b';
@@ -57,6 +61,8 @@ const report = {
   fixture: { repository, revision, files },
   modes: [],
   cleanup: false,
+  presetTransport:
+    'native GitHub loader with the short-lived contents-read job token',
 };
 await mkdir(output, { recursive: true });
 await chmod(directory, 0o755);
@@ -116,6 +122,8 @@ async function runImage(command) {
     '128',
     '--mount',
     `type=bind,src=${directory},dst=/fixture,readonly`,
+    '--env',
+    'PRESET_READ_TOKEN',
     '--entrypoint',
     '/usr/local/renovate/node',
     image,
@@ -160,7 +168,20 @@ try {
   assert.equal(cli.stdout.trim(), version);
   report.cliVersion = cli.stdout.trim();
 
-  const original = await readFile(path.join(directory, 'qualify.mjs'), 'utf8');
+  const downloaded = await readFile(
+    path.join(directory, 'qualify.mjs'),
+    'utf8',
+  );
+  const loaderMarker = 'let consumer;';
+  assert.equal(downloaded.split(loaderMarker).length, 2);
+  const authentication = `const fixtureHostRules = await import(engine + "util/host-rules.js");\nassert.ok(process.env.PRESET_READ_TOKEN);\nfixtureHostRules.add({ hostType: "github", matchHost: "https://api.github.com/repos/${repository}", readOnly: true, token: process.env.PRESET_READ_TOKEN });\n`;
+  const original = downloaded
+    .replace(loaderMarker, `${authentication}${loaderMarker}`)
+    .replace(
+      'There is no seeded preset cache, source-loader replacement or credential input.',
+      'There is no seeded preset cache or source-loader replacement. This fixture uses the short-lived job token for the public preset.',
+    );
+  await fixtureFile('qualify.mjs', original);
   for (const strict of [false, true]) {
     const mode = strict ? 'synthetic-strict' : 'unchanged-public-preset';
     if (strict) {
