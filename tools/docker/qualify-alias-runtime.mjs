@@ -1,20 +1,22 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
+import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+const execute = promisify(execFile);
 const [image, output] = process.argv.slice(2);
 assert.ok(image && output, 'usage: qualify-alias-runtime.mjs IMAGE OUTPUT');
-const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+const { version } = JSON.parse(await readFile('package.json', 'utf8'));
 const repository = 'NDDev-Technocracy-OpenNetwork/nddev-ci';
 const revision = '3e5aabcba0485ac98679a050e0a99793ddf7c72b';
 const files = [
@@ -47,7 +49,7 @@ const expectedFailures = [
   'autoReplaceGlobalMatch false: owned alias stays unchanged or is refused',
   'autoReplaceGlobalMatch false: foreign alias stays unchanged or is refused',
 ].sort();
-const directory = mkdtempSync(path.join(tmpdir(), 'renovate-alias-runtime-'));
+const directory = await mkdtemp(path.join(tmpdir(), 'renovate-alias-runtime-'));
 const containers = [];
 const report = {
   image,
@@ -56,34 +58,40 @@ const report = {
   modes: [],
   cleanup: false,
 };
-mkdirSync(output, { recursive: true });
-chmodSync(directory, 0o755);
+await mkdir(output, { recursive: true });
+await chmod(directory, 0o755);
 
 /** @param {string} text @returns {string} */
 function sha256(text) {
   return createHash('sha256').update(text).digest('hex');
 }
 
-/** @param {string[]} args @returns {import('node:child_process').SpawnSyncReturns<string>} */
-function docker(args) {
-  const result = spawnSync('docker', args, {
-    encoding: 'utf8',
-    timeout: 300000,
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  assert.ifError(result.error);
-  return result;
+/** @param {string[]} args @returns {Promise<{status: number, stdout: string, stderr: string}>} */
+async function docker(args) {
+  try {
+    const result = await execute('docker', args, {
+      encoding: 'utf8',
+      timeout: 300000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    return { status: 0, stdout: result.stdout, stderr: result.stderr };
+  } catch (error) {
+    if (typeof error.code !== 'number') {
+      throw error;
+    }
+    return { status: error.code, stdout: error.stdout, stderr: error.stderr };
+  }
 }
 
-/** @param {string} name @param {string} contents @returns {void} */
-function fixtureFile(name, contents) {
+/** @param {string} name @param {string} contents @returns {Promise<void>} */
+async function fixtureFile(name, contents) {
   const target = path.join(directory, name);
-  writeFileSync(target, contents);
-  chmodSync(target, 0o644);
+  await writeFile(target, contents);
+  await chmod(target, 0o644);
 }
 
-/** @param {string[]} command @returns {import('node:child_process').SpawnSyncReturns<string>} */
-function runImage(command) {
+/** @param {string[]} command @returns {Promise<{status: number, stdout: string, stderr: string}>} */
+async function runImage(command) {
   const name = `renovate-alias-${randomUUID()}`;
   containers.push(name);
   return docker([
@@ -133,9 +141,9 @@ try {
       digest,
       `public fixture identity: ${source}`,
     );
-    fixtureFile(destination, contents);
+    await fixtureFile(destination, contents);
   }
-  fixtureFile(
+  await fixtureFile(
     'source.json',
     JSON.stringify({
       repository,
@@ -144,12 +152,15 @@ try {
       presetSha256: files[1][2],
     }),
   );
-  const cli = runImage(['/usr/local/renovate/dist/renovate.js', '--version']);
+  const cli = await runImage([
+    '/usr/local/renovate/dist/renovate.js',
+    '--version',
+  ]);
   assert.equal(cli.status, 0, cli.stdout + cli.stderr);
   assert.equal(cli.stdout.trim(), version);
   report.cliVersion = cli.stdout.trim();
 
-  const original = readFileSync(path.join(directory, 'qualify.mjs'), 'utf8');
+  const original = await readFile(path.join(directory, 'qualify.mjs'), 'utf8');
   for (const strict of [false, true]) {
     const mode = strict ? 'synthetic-strict' : 'unchanged-public-preset';
     if (strict) {
@@ -157,33 +168,36 @@ try {
       const marker = 'const fq = ';
       assert.equal(original.split(marker).length, 2);
       const guard = `for (const config of [consumer, self, localPreset]) {\n  config.customManagers = config.customManagers.map((manager) => ({ ...manager, yamlMaxAliasCount: 0 }));\n}\n`;
-      fixtureFile('qualify.mjs', original.replace(marker, `${guard}${marker}`));
+      await fixtureFile(
+        'qualify.mjs',
+        original.replace(marker, `${guard}${marker}`),
+      );
       const preset = JSON.parse(
-        readFileSync(path.join(directory, 'preset.json'), 'utf8'),
+        await readFile(path.join(directory, 'preset.json'), 'utf8'),
       );
       preset.customManagers = preset.customManagers.map((manager) => ({
         ...manager,
         yamlMaxAliasCount: 0,
       }));
-      fixtureFile('synthetic-strict.json', JSON.stringify(preset));
-      const validation = runImage([
+      await fixtureFile('synthetic-strict.json', JSON.stringify(preset));
+      const validation = await runImage([
         '/usr/local/renovate/dist/config-validator.js',
         '/fixture/synthetic-strict.json',
       ]);
-      writeFileSync(
+      await writeFile(
         path.join(output, 'config-validation.log'),
         validation.stdout + validation.stderr,
       );
       assert.equal(validation.status, 0, validation.stdout + validation.stderr);
       report.configValidation = 'passed';
     }
-    const result = runImage([
+    const result = await runImage([
       '--test',
       '--test-reporter=tap',
       '/fixture/qualify.mjs',
     ]);
     const log = result.stdout + result.stderr;
-    writeFileSync(path.join(output, `${mode}.tap`), log);
+    await writeFile(path.join(output, `${mode}.tap`), log);
     const lines = result.stdout.split('\n');
     const counts = {};
     for (const key of [
@@ -196,7 +210,7 @@ try {
     ]) {
       const line = lines.find((value) => value.startsWith(`# ${key} `));
       assert.ok(line, `missing TAP count ${key}: ${mode}`);
-      counts[key] = Number(line.slice(`# ${key} `.length));
+      counts[key] = parseInt(line.slice(`# ${key} `.length), 10);
     }
     const failures = lines
       .filter((line) => line.startsWith('not ok '))
@@ -208,9 +222,23 @@ try {
       counts,
       failures,
       fixtureSha256: sha256(
-        readFileSync(path.join(directory, 'qualify.mjs'), 'utf8'),
+        await readFile(path.join(directory, 'qualify.mjs'), 'utf8'),
       ),
     };
+    if (strict) {
+      const warning =
+        'Unable to parse YAML with aliases disabled; skipping custom JSONata extraction';
+      const warnings = log.split(warning).length - 1;
+      assert.ok(
+        warnings >= 6,
+        'native refusal must report skipped alias files',
+      );
+      assert.ok(
+        log.includes('.github/workflows/ci.yml'),
+        'the native warning must identify the skipped workflow',
+      );
+      observation.reportedRefusals = warnings;
+    }
     report.modes.push(observation);
     process.stdout.write(`${JSON.stringify(observation)}\n`);
     assert.deepEqual(
@@ -231,14 +259,14 @@ try {
 } finally {
   const cleanupErrors = [];
   for (const name of containers) {
-    const removed = docker(['rm', '--force', name]);
+    const removed = await docker(['rm', '--force', name]);
     if (removed.status !== 0 && !removed.stderr.includes('No such container')) {
       cleanupErrors.push(removed.stderr);
     }
   }
-  rmSync(directory, { recursive: true, force: true });
+  await rm(directory, { recursive: true, force: true });
   report.cleanup = cleanupErrors.length === 0;
-  writeFileSync(
+  await writeFile(
     path.join(output, 'qualification.json'),
     `${JSON.stringify(report, null, 2)}\n`,
   );
