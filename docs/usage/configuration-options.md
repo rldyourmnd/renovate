@@ -1556,6 +1556,15 @@ It is pointless to edit the labels, as Renovate restores the labels on each run.
   Renovate migrates them into the `dependencyDashboard` object.
   `dependencyDashboardApproval` and `dependencyDashboardCategory` remain separate options, as they apply to updates rather than to the Dependency Dashboard issue.
 
+### `customManagers.yamlMaxAliasCount`
+
+This option applies only to custom JSONata managers with `fileFormat: "yaml"`.
+It sets the YAML parser's alias expansion limit. The default preserves existing alias resolution.
+Set it to `0` to reject files containing any YAML alias, including aliases outside the matched dependency or in another document.
+This is useful when updating a shared anchor could also change a value outside the manager's intended scope.
+The whole file is skipped with a warning when it cannot be parsed with aliases disabled; literal values without aliases remain supported.
+
+
 ### `dependencyDashboard.autoclose`
 
 You can configure this to `true` if you prefer Renovate to close an existing Dependency Dashboard whenever there are no outstanding PRs left.
